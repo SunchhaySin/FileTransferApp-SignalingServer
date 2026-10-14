@@ -2,13 +2,41 @@ import http from "http";
 import { WebSocketServer } from "ws";
 import { randomUUID } from "crypto";
 
-const PORT = 8080;
 const HEARTBEAT_MS = 15_000;
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // forget unused reconnect tokens after 24h
 const RELAYED_TYPES = ["offer", "answer", "ice", "reject"];
 
-const server = http.createServer();
-const wss = new WebSocketServer({ server, maxPayload: 64 * 1024 }); // SDP fits easily in 64 KB
+const server = http.createServer((req, res) => {
+  if (req.url === "/health" || req.url === "/") {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("OK");
+    return;
+  }
+
+  // Fallback for non-existent HTTP routes
+  res.writeHead(404);
+  res.end();
+});
+
+// Attach WebSocketServer to the HTTP server
+const wss = new WebSocketServer({
+  server,
+  maxPayload: 64 * 1024, // SDP fits nicely in 64 KB
+  verifyClient: (info, callback) => {
+    const origin = info.origin;
+    const allowedOrigins = [
+      "https://file-transfer-web-pi.vercel.app",
+      "http://localhost:5173", // Dev mode
+    ];
+
+    // Allow connections if origin matches or during server-to-server tests
+    if (!origin || allowedOrigins.some((o) => origin.startsWith(o))) {
+      callback(true);
+    } else {
+      callback(false, 403, "Forbidden Origin");
+    }
+  },
+}); 
 
 const peers = new Map(); // id    -> { ws, name }            (online devices)
 const sessions = new Map(); // token -> { id, lastSeen }        (private reconnect tokens)
@@ -127,7 +155,7 @@ setInterval(
   },
   60 * 60 * 1000,
 );
-
-server.listen(PORT, "127.0.0.1", () => {
-  console.log(`Signaling server running on ws://127.0.0.1:${PORT}`);
+const PORT = process.env.PORT || 8080;
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`Signaling server running on ${PORT}`);
 });
